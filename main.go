@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 type (
 	Location struct {
+		Error    bool   `json:"erro"`
 		Cep      string `json:"cep"`
 		Location string `json:"localidade"`
 	}
@@ -23,6 +25,12 @@ type (
 		Temp_C float64 `json:"temp_c"`
 		Temp_F float64 `json:"temp_f"`
 	}
+
+	ResponseDto struct {
+		Temp_C float64 `json:"temp_C"`
+		Temp_K float64 `json:"temp_K"`
+		Temp_F float64 `json:"temp_F"`
+	}
 )
 
 const (
@@ -30,11 +38,11 @@ const (
 )
 
 func main() {
-	http.HandleFunc("GET /{cep}", handle)
+	http.HandleFunc("GET /{cep}", Handle)
 	http.ListenAndServe(":8080", nil)
 }
 
-func handle(w http.ResponseWriter, r *http.Request) {
+func Handle(w http.ResponseWriter, r *http.Request) {
 	cep := r.PathValue("cep")
 	if valid := validCep(cep); !valid {
 		http.Error(w, "invalid zipcode", http.StatusUnprocessableEntity)
@@ -43,15 +51,11 @@ func handle(w http.ResponseWriter, r *http.Request) {
 
 	respCep, err := http.Get("http://viacep.com.br/ws/" + cep + "/json/")
 	if err != nil {
-		if respCep.StatusCode == http.StatusNotFound {
-			http.Error(w, "can not find zipcode", http.StatusNotFound)
-			return
-		}
 		http.Error(w, "can not get location", http.StatusInternalServerError)
 		return
 	}
-
 	defer respCep.Body.Close()
+
 	var l Location
 	err = json.NewDecoder(respCep.Body).Decode(&l)
 	if err != nil {
@@ -59,9 +63,16 @@ func handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respWeather, err := http.Get("http://api.weatherapi.com/v1/current.json?q=" + l.Location + "&key=" + weatherApiKey)
+	if l.Error {
+		http.Error(w, "can not find zipcode", http.StatusNotFound)
+		return
+	}
+
+	openWeatherUrl := fmt.Sprintf("http://api.weatherapi.com/v1/current.json?key=%s&q=%s&aqi=no", weatherApiKey, url.QueryEscape(l.Location))
+
+	respWeather, err := http.Get(openWeatherUrl)
 	if respWeather.StatusCode != http.StatusOK || err != nil {
-		fmt.Println("http://api.weatherapi.com/v1/current.json?q=" + l.Location + "&key=" + weatherApiKey)
+		fmt.Println(openWeatherUrl)
 
 		http.Error(w, "can not get weather", respWeather.StatusCode)
 		return
@@ -69,12 +80,11 @@ func handle(w http.ResponseWriter, r *http.Request) {
 	defer respWeather.Body.Close()
 
 	var weather WeatherApiResp
-	err = json.NewDecoder(respWeather.Body).Decode(&weather)
-	currentTemp, err := getCurrentTemp(weather)
-	if err != nil {
+	if err = json.NewDecoder(respWeather.Body).Decode(&weather); err != nil {
 		http.Error(w, "can not decode weather", http.StatusInternalServerError)
 		return
 	}
+	currentTemp := getCurrentTemp(weather)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -93,16 +103,10 @@ func validCep(cep string) bool {
 	return true
 }
 
-// func getLocation(cep string) (string, error) {
-// 	resp, err := http.Get("http://viacep.com.br/ws/" + cep + "/json/")
-// 	if err != nil {
-// 		return "", err
-// 	}
-// 	defer resp.Body.Close()
-// 	return
-// }
-
-func getCurrentTemp(w WeatherApiResp) (Current, error) {
-	// w.Current.Temp_K = w.Current.Temp_C + 273.15
-	return w.Current, nil
+func getCurrentTemp(w WeatherApiResp) ResponseDto {
+	return ResponseDto{
+		Temp_C: w.Current.Temp_C,
+		Temp_F: w.Current.Temp_F,
+		Temp_K: w.Current.Temp_C + 273,
+	}
 }
