@@ -18,7 +18,7 @@ func Test_Handle(t *testing.T) {
 		}
 	})
 
-	t.Run("should return 404 when viacep is down", func(t *testing.T) {
+	t.Run("should return 404 when cep is not found", func(t *testing.T) {
 		r := httptest.NewRequest("GET", "/", nil)
 		r.SetPathValue("cep", "12345678")
 		w := httptest.NewRecorder()
